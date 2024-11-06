@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,129 +9,244 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  runApp(InventoryApp());
+  runApp(const MyApp());
 }
 
-class DefaultFirebaseOptions {
-  static var currentPlatform;
-}
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
-class InventoryApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Inventory Management App',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
-      home: InventoryHomePage(title: 'Inventory Home Page'),
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Product Manager',
+      home: HomePage(),
     );
   }
 }
 
-class InventoryHomePage extends StatefulWidget {
-  final String title;
-  InventoryHomePage({Key? key, required this.title}) : super(key: key);
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
 
   @override
-  _InventoryHomePageState createState() => _InventoryHomePageState();
+  State<HomePage> createState() => _HomePageState();
 }
 
-class _InventoryHomePageState extends State<InventoryHomePage> {
+class _HomePageState extends State<HomePage> {
   final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _quantityController = TextEditingController();
+  final TextEditingController _priceController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _minPriceController = TextEditingController();
+  final TextEditingController _maxPriceController = TextEditingController();
 
-  void _addItem() async {
-    await FirebaseFirestore.instance.collection('inventory').add({
-      'name': _nameController.text,
-      'quantity': int.tryParse(_quantityController.text) ?? 0,
-    });
+  final CollectionReference _products = FirebaseFirestore.instance.collection('products');
 
-    _nameController.clear();
-    _quantityController.clear();
+  String _searchQuery = '';
+  double? _minPrice;
+  double? _maxPrice;
+
+  Future<void> _createOrUpdate([DocumentSnapshot? documentSnapshot]) async {
+    String action = 'create';
+    if (documentSnapshot != null) {
+      action = 'update';
+      _nameController.text = documentSnapshot['name'];
+      _priceController.text = documentSnapshot['price'].toString();
+    }
+    await showModalBottomSheet(
+      isScrollControlled: true,
+      context: context,
+      builder: (BuildContext ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            top: 20,
+            left: 20,
+            right: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: 'Name'),
+              ),
+              TextField(
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                controller: _priceController,
+                decoration: const InputDecoration(labelText: 'Price'),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                child: Text(action == 'create' ? 'Create' : 'Update'),
+                onPressed: () async {
+                  String name = _nameController.text;
+                  double? price = double.tryParse(_priceController.text);
+                  if (name.isNotEmpty && price != null) {
+                    if (action == 'create') {
+                      await _products.add({"name": name, "price": price});
+                    } else {
+                      await _products.doc(documentSnapshot!.id).update({
+                        "name": name,
+                        "price": price,
+                      });
+                    }
+                    _nameController.text = '';
+                    _priceController.text = '';
+                    Navigator.of(context).pop();
+                  }
+                },
+              )
+            ],
+          ),
+        );
+      },
+    );
   }
 
-  void _updateItem(String docId) async {
-    await FirebaseFirestore.instance.collection('inventory').doc(docId).update({
-      'name': _nameController.text,
-      'quantity': int.tryParse(_quantityController.text) ?? 0,
-    });
-
-    _nameController.clear();
-    _quantityController.clear();
+  Future<void> _deleteProduct(String productId) async {
+    await _products.doc(productId).delete();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Product successfully deleted'),
+      ),
+    );
   }
 
-  void _deleteItem(String docId) async {
-    await FirebaseFirestore.instance.collection('inventory').doc(docId).delete();
+  Stream<QuerySnapshot> _getProducts() {
+    Query query = _products;
+
+    if (_searchQuery.isNotEmpty) {
+      query = query
+          .where('name', isGreaterThanOrEqualTo: _searchQuery)
+          .where('name', isLessThanOrEqualTo: '$_searchQuery\uf8ff');
+    }
+
+    if (_minPrice != null && _maxPrice != null) {
+      query = query
+          .where('price', isGreaterThanOrEqualTo: _minPrice)
+          .where('price', isLessThanOrEqualTo: _maxPrice);
+    }
+
+    return query.snapshots();
+  }
+
+  void _applyFilters() {
+    setState(() {
+      _searchQuery = _searchController.text;
+      _minPrice = double.tryParse(_minPriceController.text);
+      _maxPrice = double.tryParse(_maxPriceController.text);
+    });
+  }
+
+  void _clearFilters() {
+    setState(() {
+      _searchController.clear();
+      _minPriceController.clear();
+      _maxPriceController.clear();
+      _searchQuery = '';
+      _minPrice = null;
+      _maxPrice = null;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        title: const Text('Product Manager'),
       ),
       body: Column(
         children: [
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('inventory').snapshots(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const CircularProgressIndicator();
-                return ListView(
-                  children: snapshot.data!.docs.map((document) {
-                    return ListTile(
-                      title: Text(document['name']),
-                      subtitle: Text('Quantity: ${document['quantity']}'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: Icon(Icons.edit),
-                            onPressed: () {
-                              _nameController.text = document['name'];
-                              _quantityController.text = document['quantity'].toString();
-                              _updateItem(document.id);
-                            },
-                          ),
-                          IconButton(
-                            icon: Icon(Icons.delete),
-                            onPressed: () => _deleteItem(document.id),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                );
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              controller: _searchController,
+              decoration: const InputDecoration(labelText: 'Search by name'),
+              onChanged: (value) {
+                _applyFilters();
               },
             ),
           ),
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child: TextField(
-              controller: _nameController,
-              decoration: InputDecoration(
-                labelText: 'Item Name',
-                border: OutlineInputBorder(),
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _minPriceController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Min Price'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _maxPriceController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Max Price'),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.filter_list),
+                  onPressed: _applyFilters,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: _clearFilters,
+                ),
+              ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: TextField(
-              controller: _quantityController,
-              decoration: InputDecoration(
-                labelText: 'Quantity',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.numberWithOptions(decimal: true),
+          Expanded(
+            child: StreamBuilder(
+              stream: _getProducts(),
+              builder: (context, AsyncSnapshot<QuerySnapshot> streamSnapshot) {
+                if (streamSnapshot.hasData) {
+                  final docs = streamSnapshot.data!.docs;
+                  if (docs.isEmpty) {
+                    return const Center(child: Text('No products found'));
+                  }
+                  return ListView.builder(
+                    itemCount: docs.length,
+                    itemBuilder: (context, index) {
+                      final DocumentSnapshot documentSnapshot = docs[index];
+                      return Card(
+                        margin: const EdgeInsets.all(10),
+                        child: ListTile(
+                          title: Text(documentSnapshot['name']),
+                          subtitle: Text(documentSnapshot['price'].toString()),
+                          trailing: SizedBox(
+                            width: 100,
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit),
+                                  onPressed: () =>
+                                      _createOrUpdate(documentSnapshot),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete),
+                                  onPressed: () =>
+                                      _deleteProduct(documentSnapshot.id),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                }
+                return const Center(child: CircularProgressIndicator());
+              },
             ),
           ),
-          ElevatedButton(
-            onPressed: _addItem,
-            child: const Text('Add Item'),
-          )
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _createOrUpdate(),
+        child: const Icon(Icons.add),
       ),
     );
   }
