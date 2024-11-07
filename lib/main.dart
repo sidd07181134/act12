@@ -1,7 +1,6 @@
-
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 
 void main() async {
@@ -9,244 +8,132 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  runApp(const MyApp());
+  runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Product Manager',
-      home: HomePage(),
+    return MaterialApp(
+      title: 'Firebase Auth Demo',
+      home: AuthenticationScreen(),
     );
   }
 }
 
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
-
+class AuthenticationScreen extends StatefulWidget {
   @override
-  State<HomePage> createState() => _HomePageState();
+  _AuthenticationScreenState createState() => _AuthenticationScreenState();
 }
 
-class _HomePageState extends State<HomePage> {
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _priceController = TextEditingController();
-  final TextEditingController _searchController = TextEditingController();
-  final TextEditingController _minPriceController = TextEditingController();
-  final TextEditingController _maxPriceController = TextEditingController();
+class _AuthenticationScreenState extends State<AuthenticationScreen> {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _isRegister = true;  // Toggle between Register & Sign-in
 
-  final CollectionReference _products = FirebaseFirestore.instance.collection('products');
-
-  String _searchQuery = '';
-  double? _minPrice;
-  double? _maxPrice;
-
-  Future<void> _createOrUpdate([DocumentSnapshot? documentSnapshot]) async {
-    String action = 'create';
-    if (documentSnapshot != null) {
-      action = 'update';
-      _nameController.text = documentSnapshot['name'];
-      _priceController.text = documentSnapshot['price'].toString();
-    }
-    await showModalBottomSheet(
-      isScrollControlled: true,
-      context: context,
-      builder: (BuildContext ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            top: 20,
-            left: 20,
-            right: 20,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: _nameController,
-                decoration: const InputDecoration(labelText: 'Name'),
-              ),
-              TextField(
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                controller: _priceController,
-                decoration: const InputDecoration(labelText: 'Price'),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                child: Text(action == 'create' ? 'Create' : 'Update'),
-                onPressed: () async {
-                  String name = _nameController.text;
-                  double? price = double.tryParse(_priceController.text);
-                  if (name.isNotEmpty && price != null) {
-                    if (action == 'create') {
-                      await _products.add({"name": name, "price": price});
-                    } else {
-                      await _products.doc(documentSnapshot!.id).update({
-                        "name": name,
-                        "price": price,
-                      });
-                    }
-                    _nameController.text = '';
-                    _priceController.text = '';
-                    Navigator.of(context).pop();
-                  }
-                },
-              )
-            ],
-          ),
+  void _register() async {
+    if (_formKey.currentState!.validate()) {
+      try {
+        await _auth.createUserWithEmailAndPassword(
+          email: _emailController.text.trim(),
+          password: _passwordController.text.trim(),
         );
-      },
-    );
-  }
-
-  Future<void> _deleteProduct(String productId) async {
-    await _products.doc(productId).delete();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Product successfully deleted'),
-      ),
-    );
-  }
-
-  Stream<QuerySnapshot> _getProducts() {
-    Query query = _products;
-
-    if (_searchQuery.isNotEmpty) {
-      query = query
-          .where('name', isGreaterThanOrEqualTo: _searchQuery)
-          .where('name', isLessThanOrEqualTo: '$_searchQuery\uf8ff');
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ProfileScreen()));
+      } on FirebaseAuthException catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? "Registration Error")));
+      }
     }
+  }
 
-    if (_minPrice != null && _maxPrice != null) {
-      query = query
-          .where('price', isGreaterThanOrEqualTo: _minPrice)
-          .where('price', isLessThanOrEqualTo: _maxPrice);
+  void _signIn() async {
+    if (_formKey.currentState!.validate()) {
+      try {
+        await _auth.signInWithEmailAndPassword(
+          email: _emailController.text.trim(),
+          password: _passwordController.text.trim(),
+        );
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ProfileScreen()));
+      } on FirebaseAuthException catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? "Sign-in Error")));
+      }
     }
-
-    return query.snapshots();
-  }
-
-  void _applyFilters() {
-    setState(() {
-      _searchQuery = _searchController.text;
-      _minPrice = double.tryParse(_minPriceController.text);
-      _maxPrice = double.tryParse(_maxPriceController.text);
-    });
-  }
-
-  void _clearFilters() {
-    setState(() {
-      _searchController.clear();
-      _minPriceController.clear();
-      _maxPriceController.clear();
-      _searchQuery = '';
-      _minPrice = null;
-      _maxPrice = null;
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Product Manager'),
+        title: Text(_isRegister ? 'Register' : 'Sign In'),
+        actions: [
+          TextButton(
+            onPressed: () => setState(() => _isRegister = !_isRegister),
+            child: Text(_isRegister ? 'Sign In' : 'Register', style: TextStyle(color: Colors.white)),
+          )
+        ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: TextField(
-              controller: _searchController,
-              decoration: const InputDecoration(labelText: 'Search by name'),
-              onChanged: (value) {
-                _applyFilters();
-              },
+      body: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextFormField(
+              controller: _emailController,
+              decoration: InputDecoration(labelText: 'Email'),
+              validator: (value) => value != null && value.contains('@') ? null : 'Enter a valid email',
+              autovalidateMode: AutovalidateMode.onUserInteraction,
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _minPriceController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(labelText: 'Min Price'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _maxPriceController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(labelText: 'Max Price'),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.filter_list),
-                  onPressed: _applyFilters,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: _clearFilters,
-                ),
-              ],
+            TextFormField(
+              controller: _passwordController,
+              decoration: InputDecoration(labelText: 'Password'),
+              obscureText: true,
+              validator: (value) => value != null && value.length >= 6 ? null : 'Password must be 6 characters',
+              autovalidateMode: AutovalidateMode.onUserInteraction,
             ),
-          ),
-          Expanded(
-            child: StreamBuilder(
-              stream: _getProducts(),
-              builder: (context, AsyncSnapshot<QuerySnapshot> streamSnapshot) {
-                if (streamSnapshot.hasData) {
-                  final docs = streamSnapshot.data!.docs;
-                  if (docs.isEmpty) {
-                    return const Center(child: Text('No products found'));
-                  }
-                  return ListView.builder(
-                    itemCount: docs.length,
-                    itemBuilder: (context, index) {
-                      final DocumentSnapshot documentSnapshot = docs[index];
-                      return Card(
-                        margin: const EdgeInsets.all(10),
-                        child: ListTile(
-                          title: Text(documentSnapshot['name']),
-                          subtitle: Text(documentSnapshot['price'].toString()),
-                          trailing: SizedBox(
-                            width: 100,
-                            child: Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit),
-                                  onPressed: () =>
-                                      _createOrUpdate(documentSnapshot),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete),
-                                  onPressed: () =>
-                                      _deleteProduct(documentSnapshot.id),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                }
-                return const Center(child: CircularProgressIndicator());
-              },
+            ElevatedButton(
+              onPressed: _isRegister ? _register : _signIn,
+              child: Text(_isRegister ? 'Register' : 'Sign In'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ProfileScreen extends StatelessWidget {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  void _signOut(BuildContext context) async {
+    await _auth.signOut();
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => AuthenticationScreen()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = _auth.currentUser;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Profile'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.exit_to_app),
+            onPressed: () => _signOut(context),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _createOrUpdate(),
-        child: const Icon(Icons.add),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Text('Hello, ${user?.email}'),
+            ElevatedButton(
+              onPressed: () => _signOut(context),
+              child: Text('Logout'),
+            ),
+          ],
+        ),
       ),
     );
   }
